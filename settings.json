@@ -1,0 +1,9 @@
+{
+  "carbon_factor": 0.5777,
+  "carbon_factor_source": "生态环境部2024年电力碳足迹因子公告（全国平均 0.5777 kgCO2e/kWh）",
+  "price_flat": 0.7,
+  "data_source": "simulator",
+  "data_api_url": "",
+  "data_api_note": "接入真实电表时填 MQTT/Modbus 网关地址，系统会按小时轮询拉取 load_kw/pv_kw 字段",
+  "updated_at": "2026-10-05 09:41"
+}

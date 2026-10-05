@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+lt.log
+_tun_test*.txt
+*.log
+.DS_Store

@@ -1,0 +1,160 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 碳核算 ESG</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon" class="active">碳核算 ESG</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>碳核算 · ESG</h1>
+    <p>排放因子法：碳排放(tCO₂e) = 用电量(kWh) × 碳足迹因子 0.5777 kgCO₂e/kWh（生态环境部2024年公告）</p>
+  </div>
+
+  <!-- 指标卡 -->
+  <div class="grid-4" id="stat-cards">
+    <div class="loading" style="grid-column:1/-1;">核算中…</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>碳排放日趋势</h3>
+      <div class="sub">90天逐日碳排放（tCO₂e）· 面积图突出减排趋势</div>
+      <div class="chart" id="co2-chart"></div>
+    </div>
+    <div class="card">
+      <h3>楼栋碳排放占比</h3>
+      <div class="sub">按楼栋碳排放量（tCO₂e）</div>
+      <div class="chart sm" id="bpie-chart"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>ESG 摘要报告</h3>
+    <div class="summary-box green" id="esg-box">生成中…</div>
+  </div>
+
+  <div class="card">
+    <h3>周度碳排放</h3>
+    <div class="sub">按 ISO 周序汇总（tCO₂e）</div>
+    <div class="chart sm" id="week-chart"></div>
+  </div>
+</div>
+
+<div class="footer">慧碳安居 · 第一届"海之子"杯AI智能体挑战赛 · 碳核算ESG模块</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script>
+document.getElementById('nav-date').textContent = todayStr();
+
+(async function () {
+  const statBox = document.getElementById('stat-cards');
+  try {
+    const d = await fetchJSON('/api/carbon');
+
+    statBox.innerHTML = [
+      '<div class="stat-card stat-red"><div class="label">园区总碳排放</div>' +
+        '<div class="value">' + fmtNum(d.total_co2, 1) + ' <small>tCO₂e</small></div>' +
+        '<div class="note">' + d.n_days + '天 · 排放因子法</div></div>',
+      '<div class="stat-card stat-blue"><div class="label">园区总用电</div>' +
+        '<div class="value">' + fmtNum(d.total_kwh) + ' <small>kWh</small></div>' +
+        '<div class="note">碳足迹因子 ' + d.factor + ' kgCO₂e/kWh</div></div>',
+      '<div class="stat-card stat-cyan"><div class="label">光伏等效减排</div>' +
+        '<div class="value">' + fmtNum(d.pv_avoid_co2, 1) + ' <small>tCO₂e</small></div>' +
+        '<div class="note">光伏发电 ' + fmtNum(d.pv_kwh) + ' kWh</div></div>',
+      '<div class="stat-card stat-green"><div class="label">最近30天碳排</div>' +
+        '<div class="value">' + fmtNum(d.last30_co2, 1) + ' <small>tCO₂e</small></div>' +
+        '<div class="note">趋势参考</div></div>',
+    ].join('');
+
+    // 碳排放日趋势（面积图）
+    const co2 = initChart(document.getElementById('co2-chart'));
+    renderChart(co2, {
+      color: ['#e85c5c'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        return p[0].axisValue + '<br/>碳排放：' + fmtNum(p[0].value, 2) + ' tCO₂e';
+      }}),
+      grid: { left: 55, right: 18, top: 24, bottom: 30 },
+      xAxis: { type: 'category', data: d.daily.map(function (x) { return x.date.slice(5); }),
+               axisLabel: { color: '#7a8699', fontSize: 11, interval: 5 } },
+      yAxis: { type: 'value', name: '吨', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [{ type: 'line', smooth: true, showSymbol: false,
+        data: d.daily.map(function (x) { return x.co2_t; }),
+        areaStyle: { opacity: 0.18 }, lineStyle: { width: 2 } }],
+    });
+
+    // 楼栋占比
+    const bp = initChart(document.getElementById('bpie-chart'));
+    renderChart(bp, {
+      color: ['#4a90d9', '#3eb575', '#f5a623'],
+      tooltip: Object.assign({}, TOOLTIP, { trigger: 'item',
+        formatter: function (p) { return p.name + '：' + fmtNum(p.value, 1) + ' tCO₂e（' + p.percent + '%）'; } }),
+      legend: { bottom: 0, textStyle: { color: '#7a8699' } },
+      series: [{
+        type: 'pie', radius: ['42%', '68%'], center: ['50%', '46%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+        label: { formatter: '{b}\n{d}%', fontSize: 12, color: '#2b3245' },
+        data: d.per_building.map(function (b) {
+          return { name: b.building + '栋', value: b.co2_t };
+        }),
+      }],
+    });
+
+    // 周度
+    const wk = initChart(document.getElementById('week-chart'));
+    renderChart(wk, {
+      color: ['#8b6fd8'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        return '第' + p[0].axisValue + '周<br/>碳排放：' + fmtNum(p[0].value, 2) + ' tCO₂e';
+      }}),
+      grid: { left: 55, right: 18, top: 24, bottom: 30 },
+      xAxis: { type: 'category', data: d.weekly.map(function (x) { return x.week; }),
+               axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: { type: 'value', name: '吨', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [{ type: 'bar', barWidth: '45%',
+        data: d.weekly.map(function (x) { return x.co2_t; }),
+        itemStyle: { borderRadius: [6, 6, 0, 0] },
+        label: { show: true, position: 'top', fontSize: 11, color: '#2b3245',
+                 formatter: function (p) { return p.value.toFixed(1); } } }],
+    });
+
+    // ESG 摘要
+    const lines = [
+      '【园区碳排放报告（模拟数据，口径见下）】',
+      '· 核算方法：排放因子法；碳足迹因子 ' + d.factor + ' kgCO₂e/kWh（生态环境部2024年电力碳足迹因子公告）',
+      '· 统计周期：' + d.n_days + ' 天（2026-07-01 起）',
+      '· 园区总用电 ' + fmtNum(d.total_kwh, 0) + ' kWh → 碳排放 ' + fmtNum(d.total_co2, 1) + ' tCO₂e',
+      '· 光伏发电 ' + fmtNum(d.pv_kwh, 0) + ' kWh → 等效减排 ' + fmtNum(d.pv_avoid_co2, 1) + ' tCO₂e（减排率 ' +
+        fmtNum(d.pv_avoid_co2 / (d.total_co2 + d.pv_avoid_co2) * 100, 1) + '%）',
+      '· 建议：结合储能调度削减峰段购电（可同时降低用电成本与碳排放）；推广光伏+储能+预测一体化运营，支撑ESG披露与绿色低碳园区建设。',
+    ];
+    document.getElementById('esg-box').textContent = lines.join('\n');
+  } catch (e) {
+    showError(statBox, e.message);
+  }
+})();
+</script>
+</body>
+</html>

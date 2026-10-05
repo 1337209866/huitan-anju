@@ -1,0 +1,177 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 能耗分析</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy" class="active">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon">碳核算 ESG</a>
+    <a href="/chat">智能助手</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>能耗分析</h1>
+    <p>按楼栋查看典型日负荷形态、电量趋势、工作日/周末差异与分时电价联动</p>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn btn-primary active-btn" data-b="A" onclick="switchB('A', this)">A · 办公楼</button>
+    <button class="btn btn-green" data-b="B" onclick="switchB('B', this)">B · 住宅楼</button>
+    <button class="btn btn-orange" data-b="C" onclick="switchB('C', this)">C · 商业楼</button>
+    <div class="spacer"></div>
+    <div class="summary-box" style="padding:8px 14px;font-size:12.5px;" id="b-info">—</div>
+  </div>
+
+  <div class="card">
+    <h3>典型日 24 小时负荷曲线</h3>
+    <div class="sub">该楼栋全周期逐小时平均 · 负荷/光伏/电价叠加展示</div>
+    <div class="chart" id="hour-chart"></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>日用电量趋势</h3>
+      <div class="sub">90 天逐日用电量（kWh）</div>
+      <div class="chart" id="daily-chart"></div>
+    </div>
+    <div class="card">
+      <h3>工作日 vs 周末负荷形态</h3>
+      <div class="sub">逐小时平均负荷对比</div>
+      <div class="chart" id="wv-chart"></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">慧碳安居 · 第一届"海之子"杯AI智能体挑战赛 · 能耗分析模块</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script>
+const INFO = {
+  A: { t: '办公楼', d: '10000 m² · 400kW光伏 · 工作日9-18点高峰，夜间低谷' },
+  B: { t: '住宅楼', d: '8000 m² · 100kW光伏 · 早晚双峰（7-9点/18-22点）' },
+  C: { t: '商业楼', d: '6000 m² · 300kW光伏 · 10-20点长高峰，周末繁忙' },
+};
+const cur = { b: 'A', hour: null, daily: null, wv: null };
+
+document.getElementById('nav-date').textContent = todayStr();
+
+function switchB(b, btn) {
+  cur.b = b;
+  document.querySelectorAll('.toolbar .btn').forEach(function (x) { x.classList.remove('active-btn'); });
+  btn.classList.add('active-btn');
+  const info = INFO[b];
+  document.getElementById('b-info').textContent = info.t + ' · ' + info.d;
+  document.querySelectorAll('.toolbar .btn[data-b]').forEach(function (x) {
+    if (x.dataset.b === 'A') x.className = 'btn btn-primary' + (b === 'A' ? ' active-btn' : '');
+    if (x.dataset.b === 'B') x.className = 'btn btn-green' + (b === 'B' ? ' active-btn' : '');
+    if (x.dataset.b === 'C') x.className = 'btn btn-orange' + (b === 'C' ? ' active-btn' : '');
+  });
+  load();
+}
+
+async function load() {
+  try {
+    const d = await fetchJSON('/api/energy?building=' + cur.b);
+
+    // 24h 曲线：柱（负荷）+ 线（光伏）+ 线（电价）
+    if (!cur.hour) cur.hour = initChart(document.getElementById('hour-chart'));
+    renderChart(cur.hour, {
+      color: ['#4a90d9', '#36b8c9', '#f5a623'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        let s = p[0].axisValue + ':00<br/>';
+        p.forEach(function (i) {
+          const unit = i.seriesName === '电价' ? ' 元/kWh' : ' kW';
+          s += i.marker + i.seriesName + '：' + fmtNum(i.value, 2) + unit + '<br/>';
+        });
+        return s;
+      }}),
+      legend: { data: ['负荷', '光伏', '电价'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 60, right: 60, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: d.hour_curve.map(function (h) { return h.hour; }),
+               axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: [
+        { type: 'value', name: '功率(kW)', nameTextStyle: { color: '#7a8699' },
+          axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+        { type: 'value', name: '电价(元)', nameTextStyle: { color: '#7a8699' },
+          axisLabel: { color: '#7a8699', fontSize: 11, formatter: '{value}' },
+          splitLine: { show: false } },
+      ],
+      series: [
+        { name: '负荷', type: 'bar', barWidth: '55%',
+          data: d.hour_curve.map(function (h) { return h.load; }),
+          itemStyle: { borderRadius: [5, 5, 0, 0] } },
+        { name: '光伏', type: 'line', smooth: true, showSymbol: false,
+          yAxisIndex: 0, data: d.hour_curve.map(function (h) { return h.pv; }),
+          lineStyle: { width: 2 } },
+        { name: '电价', type: 'line', smooth: false, showSymbol: false,
+          yAxisIndex: 1, data: d.hour_curve.map(function (h) { return h.price; }),
+          lineStyle: { width: 2, type: 'dashed' } },
+      ],
+    });
+
+    // 日趋势
+    if (!cur.daily) cur.daily = initChart(document.getElementById('daily-chart'));
+    renderChart(cur.daily, {
+      color: ['#4a90d9'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        return p[0].axisValue + '<br/>用电：' + fmtNum(p[0].value, 1) + ' kWh';
+      }}),
+      grid: { left: 55, right: 18, top: 24, bottom: 30 },
+      xAxis: { type: 'category', data: d.daily_series.map(function (x) { return x.date.slice(5); }),
+               axisLabel: { color: '#7a8699', fontSize: 11, interval: 5 } },
+      yAxis: { type: 'value', name: 'kWh', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [{ type: 'line', smooth: true, showSymbol: false,
+        data: d.daily_series.map(function (x) { return x.kwh; }),
+        areaStyle: { opacity: 0.12 }, lineStyle: { width: 2 } }],
+    });
+
+    // 工作日 vs 周末
+    if (!cur.wv) cur.wv = initChart(document.getElementById('wv-chart'));
+    renderChart(cur.wv, {
+      color: ['#3eb575', '#8b6fd8'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        let s = p[0].axisValue + ':00<br/>';
+        p.forEach(function (i) { s += i.marker + i.seriesName + '：' + fmtNum(i.value, 1) + ' kW<br/>'; });
+        return s;
+      }}),
+      legend: { data: ['工作日', '周末'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 55, right: 18, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: d.work_vs_weekend.map(function (h) { return h.hour; }),
+               axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: { type: 'value', name: 'kW', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [
+        { name: '工作日', type: 'line', smooth: true, showSymbol: false,
+          data: d.work_vs_weekend.map(function (h) { return h.workday; }), lineStyle: { width: 2 } },
+        { name: '周末', type: 'line', smooth: true, showSymbol: false,
+          data: d.work_vs_weekend.map(function (h) { return h.weekend; }), lineStyle: { width: 2, type: 'dashed' } },
+      ],
+    });
+  } catch (e) {
+    showError(document.getElementById('hour-chart'), e.message);
+  }
+}
+
+switchB('A', document.querySelector('.toolbar .btn[data-b="A"]'));
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 智能助手</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+  .chat-wrap { display:flex; flex-direction:column; height:calc(100vh - 70px); }
+  .chat-box { flex:1; overflow-y:auto; padding:20px 6px; }
+  .msg { display:flex; margin-bottom:14px; }
+  .msg .avatar { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
+  .msg.user { justify-content:flex-end; }
+  .msg.user .bubble { background:#4A90D9; color:#fff; }
+  .msg.bot .bubble { background:#fff; color:#1A1B1C; border:1px solid #E4E3DD; }
+  .bubble { max-width:70%; padding:12px 16px; border-radius:14px; line-height:1.65; font-size:14px; white-space:pre-wrap; word-break:break-word; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .msg.bot .avatar { background:#E8F1FB; margin-right:10px; }
+  .msg.user .avatar { background:#4A90D9; color:#fff; margin-left:10px; order:2; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; padding:8px 4px 12px; }
+  .chip { background:#fff; border:1px solid #D5DCE5; color:#4A90D9; padding:6px 12px; border-radius:16px; font-size:12.5px; cursor:pointer; }
+  .chip:hover { background:#E8F1FB; }
+  .input-row { display:flex; gap:10px; padding:12px 0 16px; border-top:1px solid #E4E3DD; }
+  .input-row input { flex:1; padding:12px 14px; border:1px solid #D5DCE5; border-radius:10px; font-size:14px; outline:none; }
+  .input-row input:focus { border-color:#4A90D9; }
+  .input-row button { background:#4A90D9; color:#fff; border:none; padding:0 22px; border-radius:10px; font-size:14px; cursor:pointer; }
+  .input-row button:disabled { background:#A8C4E0; cursor:not-allowed; }
+  .typing { color:#9AA3AE; font-style:italic; }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon">碳核算 ESG</a>
+    <a href="/chat" class="active">智能助手</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container chat-wrap">
+  <div class="chat-box" id="chat-box">
+    <div class="msg bot">
+      <div class="avatar">🤖</div>
+      <div class="bubble">
+        你好，我是园区能耗智能助手。我背后连着你的实时数据库（SQLite）和四个算法模块——预测残差法异常检测、LightGBM 负荷预测、线性规划储能调度、排放因子法碳核算。
+      </div>
+    </div>
+  </div>
+
+  <div class="chips" id="chips">
+    <div class="chip">📊 园区总共用了多少电？</div>
+    <div class="chip">🏢 A栋和C栋谁用电多？</div>
+    <div class="chip">⚠️ 最近哪里有异常？浪费了多少电费？</div>
+    <div class="chip">🔋 储能今天怎么调度？能省多少钱？</div>
+    <div class="chip">🌱 园区排了多少碳？光伏抵了多少？</div>
+    <div class="chip">📈 明天什么时候用电最高？</div>
+  </div>
+
+  <div class="input-row">
+    <input id="msg" placeholder="用大白话问我，比如：B栋单耗正常吗？" autocomplete="off">
+    <button id="send">发送</button>
+  </div>
+</div>
+
+<script>
+  document.getElementById('nav-date').textContent = new Date().toLocaleDateString('zh-CN');
+  const box = document.getElementById('chat-box');
+  const input = document.getElementById('msg');
+  const send = document.getElementById('send');
+
+  function addMsg(text, who) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + who;
+    const av = document.createElement('div');
+    av.className = 'avatar';
+    av.textContent = who === 'bot' ? '🤖' : '👤';
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    b.textContent = text;
+    div.appendChild(av); div.appendChild(b);
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+    return b;
+  }
+
+  async function ask(text) {
+    addMsg(text, 'user');
+    const b = addMsg('思考中…', 'bot');
+    b.classList.add('typing');
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message: text})
+      });
+      const j = await r.json();
+      b.classList.remove('typing');
+      b.textContent = j.reply;
+    } catch (e) {
+      b.classList.remove('typing');
+      b.textContent = '请求失败：' + e;
+    }
+    box.scrollTop = box.scrollHeight;
+  }
+
+  send.onclick = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    input.value = '';
+    ask(v);
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') send.click(); });
+  document.querySelectorAll('.chip').forEach(c => {
+    c.onclick = () => ask(c.textContent.replace(/^[^\u4e00-\u9fa5a-zA-Z0-9]+/, ''));
+  });
+</script>
+</body>
+</html>

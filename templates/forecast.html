@@ -1,0 +1,150 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 负荷预测</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast" class="active">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon">碳核算 ESG</a>
+    <a href="/chat">智能助手</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>负荷预测</h1>
+    <p>LightGBM 梯度提升树 · 前75天训练 / 后15天测试 · 特征：小时·星期·工作日·温度·光伏·昨日同期·前一小时</p>
+  </div>
+
+  <!-- 指标卡 -->
+  <div class="grid-4" id="stat-cards">
+    <div class="loading" style="grid-column:1/-1;">模型训练中（约需5-10秒）…</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>未来 24 小时园区负荷预测</h3>
+      <div class="sub">逐楼栋模型滚动预测求和 · 用于储能调度与需求响应决策</div>
+      <div class="chart" id="future-chart"></div>
+    </div>
+    <div class="card">
+      <h3>各楼栋预测误差</h3>
+      <div class="sub">测试集 MAPE / MAE（逐楼栋独立建模）</div>
+      <div class="chart sm" id="perb-chart"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>方法说明</h3>
+    <div class="summary-box">
+      ① 数据：3栋楼×90天逐时负荷（共6480条），按时间切分前75天训练、后15天测试（时间外推，避免数据泄露）；
+      ② 模型：逐楼栋 LightGBM（500棵树、学习率0.05、31叶子），因三栋楼负荷形态差异大（办公/住宅/商业），分栋建模比单一模型更准；
+      ③ 特征：小时、星期、是否工作日、温度、光伏出力、昨日同时刻负荷、前一小时负荷（自回归项）;
+      ④ 评估：园区整体 MAPE 4.51%、RMSE 5.46 kW，达工程实用水平（行业一般 MAPE&lt;10% 即可用）。
+    </div>
+  </div>
+</div>
+
+<div class="footer">慧碳安居 · 第一届"海之子"杯AI智能体挑战赛 · 负荷预测模块</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script>
+document.getElementById('nav-date').textContent = todayStr();
+
+(async function () {
+  const statBox = document.getElementById('stat-cards');
+  try {
+    const d = await fetchJSON('/api/forecast');
+    const m = d.metrics;
+
+    statBox.innerHTML = [
+      '<div class="stat-card stat-green"><div class="label">整体 MAPE</div>' +
+        '<div class="value">' + m.mape + '<small>%</small></div>' +
+        '<div class="note">平均绝对百分比误差（越小越准）</div></div>',
+      '<div class="stat-card stat-blue"><div class="label">RMSE</div>' +
+        '<div class="value">' + m.rmse + ' <small>kW</small></div>' +
+        '<div class="note">均方根误差</div></div>',
+      '<div class="stat-card stat-purple"><div class="label">MAE</div>' +
+        '<div class="value">' + m.mae + ' <small>kW</small></div>' +
+        '<div class="note">平均绝对误差</div></div>',
+      '<div class="stat-card stat-orange"><div class="label">训练/测试</div>' +
+        '<div class="value">' + fmtNum(d.n_train) + ' <small style="font-size:11px;">/ ' +
+        fmtNum(d.n_test) + ' 条</small></div>' +
+        '<div class="note">75天 / 15天切分</div></div>',
+    ].join('');
+
+    // 未来24h
+    const fc = initChart(document.getElementById('future-chart'));
+    renderChart(fc, {
+      color: ['#8b6fd8'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        return p[0].axisValue + '<br/>预测负荷：' + fmtNum(p[0].value, 1) + ' kW';
+      }}),
+      grid: { left: 60, right: 20, top: 24, bottom: 40 },
+      xAxis: { type: 'category', data: d.future.map(function (x) { return x.time; }),
+               axisLabel: { color: '#7a8699', fontSize: 11, interval: 5, rotate: 0,
+                            formatter: function (val) {
+                              // val 形如 "09-29 03:00"，只显示 "03时"，按天换行
+                              var parts = val.split(' ');
+                              var day = parts[0];
+                              var hour = parts[1] ? parts[1].replace(':00', '') : '';
+                              return day + '\n' + hour + '时';
+                            } } },
+      yAxis: { type: 'value', name: 'kW', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [{ type: 'line', smooth: true, showSymbol: true, symbolSize: 5,
+        data: d.future.map(function (x) { return x.load_kw; }),
+        areaStyle: { opacity: 0.12 }, lineStyle: { width: 2.5 } }],
+    });
+
+    // 各楼栋误差
+    const pb = d.per_building;
+    const pbChart = initChart(document.getElementById('perb-chart'));
+    renderChart(pbChart, {
+      color: ['#4a90d9', '#3eb575', '#f5a623', '#8b6fd8'],
+      tooltip: Object.assign({}, TOOLTIP, { trigger: 'axis' }),
+      legend: { data: ['MAPE(%)', 'MAE(kW)'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 55, right: 45, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: Object.keys(pb).map(function (b) { return b + '栋'; }),
+               axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: [
+        { type: 'value', name: 'MAPE(%)', nameTextStyle: { color: '#7a8699' },
+          axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+        { type: 'value', name: 'MAE(kW)', nameTextStyle: { color: '#7a8699' },
+          axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: 'MAPE(%)', type: 'bar', barWidth: '38%',
+          data: Object.keys(pb).map(function (b) { return pb[b].mape; }),
+          itemStyle: { borderRadius: [5, 5, 0, 0] },
+          label: { show: true, position: 'top', fontSize: 11, color: '#2b3245',
+                   formatter: function (p) { return p.value + '%'; } } },
+        { name: 'MAE(kW)', type: 'bar', barWidth: '38%', yAxisIndex: 1,
+          data: Object.keys(pb).map(function (b) { return pb[b].mae; }),
+          itemStyle: { borderRadius: [5, 5, 0, 0] },
+          label: { show: true, position: 'top', fontSize: 11, color: '#7a8699' } },
+      ],
+    });
+  } catch (e) {
+    showError(statBox, e.message);
+  }
+})();
+</script>
+</body>
+</html>

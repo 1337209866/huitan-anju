@@ -1,0 +1,176 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 异常诊断</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly" class="active">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon">碳核算 ESG</a>
+    <a href="/chat">智能助手</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>异常诊断</h1>
+    <p>预测残差法（FDD 标准范式）检测用电异常：训练"期望能耗"模型 → 实际与期望的残差为异常信号，瞬时阈值抓突变、日级 CUSUM 抓渐变退化</p>
+  </div>
+
+  <!-- 指标卡 -->
+  <div class="grid-4" id="stat-cards">
+    <div class="loading" style="grid-column:1/-1;">算法运行中…</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>算法对比</h3>
+      <div class="sub">预测残差法（双路：瞬时 + 日级CUSUM） vs MAD 统计基线</div>
+      <div class="chart sm" id="cmp-chart"></div>
+    </div>
+    <div class="card">
+      <h3>检测结论</h3>
+      <div class="sub">综合评估与业务建议</div>
+      <div class="summary-box orange" id="conclusion">计算中…</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>三类异常分型检出率</h3>
+    <div class="sub">真实场景异常各有形态：渐变退化 / 间歇未关 / 基荷漂移，检出难度不同</div>
+    <div class="chart sm" id="type-chart"></div>
+  </div>
+
+  <div class="card">
+    <h3>命中的异常记录</h3>
+    <div class="sub">异常时间 / 楼栋 / 实际负荷 / 期望负荷 / 电价（最多展示60条，按时间排序）</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>时间</th><th>楼栋</th><th>实际(kW)</th><th>期望(kW)</th><th>电价(元/kWh)</th><th>标记</th></tr></thead>
+        <tbody id="hit-table"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="footer">慧碳安居 · 第一届"海之子"杯AI智能体挑战赛 · 异常检测模块（v2 真实化）</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script>
+document.getElementById('nav-date').textContent = todayStr();
+
+(async function () {
+  const statBox = document.getElementById('stat-cards');
+  try {
+    const d = await fetchJSON('/api/anomaly');
+    const r = d.residual, mad = d.mad, w = d.waste, types = d.types || {};
+
+    statBox.innerHTML = [
+      '<div class="stat-card stat-green"><div class="label">预测残差法 精确率</div>' +
+        '<div class="value">' + (r.precision * 100).toFixed(1) + '<small>%</small></div>' +
+        '<div class="note">TP=' + r.tp + ' FP=' + r.fp + ' FN=' + r.fn + '</div></div>',
+      '<div class="stat-card stat-green"><div class="label">召回率</div>' +
+        '<div class="value">' + (r.recall * 100).toFixed(1) + '<small>%</small></div>' +
+        '<div class="note">命中 ' + r.tp + ' / ' + r.total_gt + ' 条真实异常</div></div>',
+      '<div class="stat-card stat-orange"><div class="label">浪费电量</div>' +
+        '<div class="value">' + fmtNum(w.waste_kwh) + ' <small>kWh</small></div>' +
+        '<div class="note">' + w.anomaly_count + ' 条异常记录</div></div>',
+      '<div class="stat-card stat-red"><div class="label">浪费电费</div>' +
+        '<div class="value">¥' + fmtNum(w.waste_cost, 0) + '</div>' +
+        '<div class="note">按异常时段电价估算</div></div>',
+    ].join('');
+
+    // 算法对比图
+    const cmp = initChart(document.getElementById('cmp-chart'));
+    renderChart(cmp, {
+      color: ['#3eb575', '#8b6fd8'],
+      tooltip: Object.assign({}, TOOLTIP, { trigger: 'axis' }),
+      legend: { data: ['预测残差法', 'MAD基线'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 55, right: 20, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: ['精确率', '召回率', 'F1'], axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: { type: 'value', max: 1.1, axisLabel: { color: '#7a8699', fontSize: 11,
+               formatter: function (v) { return (v * 100).toFixed(0) + '%'; } },
+               splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [
+        { name: '预测残差法', type: 'bar', barWidth: '30%',
+          data: [r.precision, r.recall, r.f1],
+          itemStyle: { borderRadius: [5, 5, 0, 0] },
+          label: { show: true, position: 'top', fontSize: 11, color: '#2b3245',
+                   formatter: function (p) { return (p.value * 100).toFixed(1) + '%'; } } },
+        { name: 'MAD基线', type: 'bar', barWidth: '30%',
+          data: [mad.precision, mad.recall, mad.f1],
+          itemStyle: { borderRadius: [5, 5, 0, 0] },
+          label: { show: true, position: 'top', fontSize: 11, color: '#7a8699',
+                   formatter: function (p) { return (p.value * 100).toFixed(1) + '%'; } } },
+      ],
+    });
+
+    // 三类异常分型检出
+    const typeData = Object.keys(types).map(function (k) { return types[k]; });
+    const typeNames = Object.keys(types).map(function (k) {
+      return k.replace('A栋空调系统COP下降（设备效率渐变退化）', 'A型·渐变退化')
+              .replace('B栋深夜公共照明/设备老化（基荷缓慢漂移）', 'C型·基荷漂移')
+              .replace('C栋部分周末下班后空调/照明未关（间歇性）', 'B型·间歇未关');
+    });
+    const tc = initChart(document.getElementById('type-chart'));
+    renderChart(tc, {
+      color: ['#3eb575'],
+      tooltip: Object.assign({}, TOOLTIP, { trigger: 'axis' }),
+      legend: { data: ['检出率（召回）'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 60, right: 20, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: typeNames, axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: { type: 'value', max: 1.1, axisLabel: { color: '#7a8699', fontSize: 11,
+               formatter: function (v) { return (v * 100).toFixed(0) + '%'; } },
+               splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [{
+        name: '检出率（召回）', type: 'bar', barWidth: '38%',
+        data: typeData.map(function (t) { return t.recall; }),
+        itemStyle: { borderRadius: [5, 5, 0, 0] },
+        label: { show: true, position: 'top', fontSize: 11, color: '#2b3245',
+                 formatter: function (p) { return (p.value * 100).toFixed(1) + '%'; } },
+      }],
+    });
+
+    // 结论（真实化表述：不同异常形态检出难度不同，不追求100%）
+    const typeLines = Object.keys(types).map(function (k) {
+      const t = types[k];
+      return k + '：命中 ' + t.hit + '/' + t.gt + ' 条，检出率 ' + (t.recall * 100).toFixed(1) + '%';
+    }).join('；\n');
+    document.getElementById('conclusion').textContent =
+      '预测残差法 F1=' + r.f1.toFixed(3) + '，显著优于 MAD 统计基线（F1 ' + mad.f1.toFixed(3) + '）。\n' +
+      '三类异常分型检出：\n' + typeLines + '。\n' +
+      '业务含义：渐变型（空调COP退化/基荷漂移）早期偏移小、接近噪声，检出率随恶化程度上升，' +
+      '符合真实设备退化规律；间歇型（周末未关）由瞬时路捕获。' +
+      '检测窗口（部署后30天）累计浪费 ' + fmtNum(w.waste_kwh) + ' kWh、折合电费约 ¥' +
+      fmtNum(w.waste_cost, 0) + '。系统异常次日自动告警，提醒运维核查处置。';
+
+    // 异常记录表
+    document.getElementById('hit-table').innerHTML = (d.hits || []).map(function (h) {
+      const tag = h.is_gt === 1 ? '<span class="badge badge-red">真实异常</span>'
+                                : '<span class="badge badge-orange">疑似异常</span>';
+      return '<tr><td>' + h.ts + '</td><td><span class="badge badge-blue">' + h.building +
+        '栋</span></td><td>' + fmtNum(h.load_kw, 1) + '</td><td>' + fmtNum(h.expected, 1) +
+        '</td><td>' + Number(h.price).toFixed(2) + '</td><td>' + tag + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" style="color:#7a8699;">未检测到异常记录</td></tr>';
+  } catch (e) {
+    showError(statBox, e.message);
+  }
+})();
+</script>
+</body>
+</html>

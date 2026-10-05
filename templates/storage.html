@@ -1,0 +1,176 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 储能调度</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage" class="active">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon">碳核算 ESG</a>
+    <a href="/chat">智能助手</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>储能调度</h1>
+    <p>线性规划（scipy.optimize.linprog）· 低充高放削峰填谷 · 目标：最小化园区购电费用</p>
+  </div>
+
+  <div class="toolbar">
+    <span style="color:#7a8699;font-size:13px;">统计最近：</span>
+    <button class="btn btn-cyan active-btn" onclick="switchDays(3, this)">3 天</button>
+    <button class="btn btn-cyan" onclick="switchDays(7, this)">7 天</button>
+    <button class="btn btn-cyan" onclick="switchDays(14, this)">14 天</button>
+    <div class="spacer"></div>
+    <div class="summary-box green" style="padding:8px 14px;font-size:12.5px;" id="save-note">计算中…</div>
+  </div>
+
+  <!-- 指标卡 -->
+  <div class="grid-4" id="stat-cards">
+    <div class="loading" style="grid-column:1/-1;">优化求解中…</div>
+  </div>
+
+  <div class="card">
+    <h3>储能充放电计划（最近一日示例）</h3>
+    <div class="sub">柱=园区净负荷 · 绿=充电 · 橙=放电 · 虚线=分时电价</div>
+    <div class="chart" id="plan-chart"></div>
+  </div>
+
+  <div class="card">
+    <h3>逐日电费对比</h3>
+    <div class="sub">有储能 vs 无储能 购电费用（元）</div>
+    <div class="chart" id="cost-chart"></div>
+  </div>
+
+  <div class="card">
+    <h3>方法说明</h3>
+    <div class="summary-box">
+      ① 优化目标：最小化日购电费 = Σ(各小时购电量 × 该小时电价)，电价采用山东2026年工商业分时电价（尖峰1.40/峰1.19/平0.70/谷0.21/深谷0.07元）；
+      ② 约束：能量平衡（购电+放电=净负荷+充电）、储能容量500kWh、充放功率200kW、往返效率0.92、初/终态SOC闭环；
+      ③ 求解器：scipy HiGHS（内点法+单纯形混合），24h×97变量线性规划，秒级求解；
+      ④ 策略解读：系统自动在深谷/低谷时段（11-14点，0.07-0.21元）充电，在尖峰/高峰时段（17-22点，1.19-1.40元）放电，实现削峰填谷套利。
+    </div>
+  </div>
+</div>
+
+<div class="footer">慧碳安居 · 第一届"海之子"杯AI智能体挑战赛 · 储能调度模块</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script>
+let cur = { days: 3, plan: null, cost: null };
+document.getElementById('nav-date').textContent = todayStr();
+
+function switchDays(n, btn) {
+  cur.days = n;
+  document.querySelectorAll('.toolbar .btn').forEach(function (x) { x.classList.remove('active-btn'); });
+  btn.classList.add('active-btn');
+  load();
+}
+
+async function load() {
+  const statBox = document.getElementById('stat-cards');
+  try {
+    const d = await fetchJSON('/api/storage?days=' + cur.days);
+
+    statBox.innerHTML = [
+      '<div class="stat-card stat-green"><div class="label">' + cur.days + '天节省电费</div>' +
+        '<div class="value">¥' + fmtNum(d.total_save, 0) + '</div>' +
+        '<div class="note">低充高放套利收益</div></div>',
+      '<div class="stat-card stat-blue"><div class="label">无储能购电费</div>' +
+        '<div class="value">¥' + fmtNum(d.total_cost_no, 0) + '</div>' +
+        '<div class="note">' + cur.days + '天合计</div></div>',
+      '<div class="stat-card stat-purple"><div class="label">有储能购电费</div>' +
+        '<div class="value">¥' + fmtNum(d.total_cost_with, 0) + '</div>' +
+        '<div class="note">优化调度后</div></div>',
+      '<div class="stat-card stat-orange"><div class="label">降费比例</div>' +
+        '<div class="value">-' + d.save_pct + '<small>%</small></div>' +
+        '<div class="note">购电成本下降幅度</div></div>',
+    ].join('');
+    document.getElementById('save-note').textContent =
+      cur.days + '天累计节省 ¥' + fmtNum(d.total_save, 0) + '（-' + d.save_pct + '%），' +
+      '储能参数：500kWh / 200kW / 效率0.92';
+
+    // 最近一日计划
+    const last = d.days[d.days.length - 1];
+    if (!cur.plan) cur.plan = initChart(document.getElementById('plan-chart'));
+    renderChart(cur.plan, {
+      color: ['#4a90d9', '#3eb575', '#f5a623', '#8b6fd8'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        let s = p[0].axisValue + ':00<br/>';
+        p.forEach(function (i) {
+          const unit = i.seriesName === '电价' ? ' 元/kWh' : ' kW';
+          s += i.marker + i.seriesName + '：' + fmtNum(i.value, 2) + unit + '<br/>';
+        });
+        return s;
+      }}),
+      legend: { data: ['净负荷', '充电', '放电', '电价'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 60, right: 60, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: last.net_load.map(function (_, i) { return i; }),
+               axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: [
+        { type: 'value', name: '功率(kW)', nameTextStyle: { color: '#7a8699' },
+          axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+        { type: 'value', name: '电价(元)', nameTextStyle: { color: '#7a8699' },
+          axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: '净负荷', type: 'bar', barWidth: '50%',
+          data: last.net_load, itemStyle: { borderRadius: [4, 4, 0, 0], color: '#4a90d9' } },
+        { name: '充电', type: 'bar', barWidth: '16%',
+          data: last.charge, itemStyle: { color: '#3eb575' } },
+        { name: '放电', type: 'bar', barWidth: '16%',
+          data: last.discharge, itemStyle: { color: '#f5a623' } },
+        { name: '电价', type: 'line', yAxisIndex: 1, showSymbol: false,
+          data: last.price, lineStyle: { width: 2, type: 'dashed', color: '#8b6fd8' } },
+      ],
+    });
+
+    // 逐日费用
+    if (!cur.cost) cur.cost = initChart(document.getElementById('cost-chart'));
+    renderChart(cur.cost, {
+      color: ['#e85c5c', '#3eb575'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        let s = p[0].axisValue + '<br/>';
+        p.forEach(function (i) { s += i.marker + i.seriesName + '：¥' + fmtNum(i.value, 0) + '<br/>'; });
+        return s;
+      }}),
+      legend: { data: ['无储能', '有储能'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 60, right: 20, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: d.days.map(function (x) { return x.day.slice(5); }),
+               axisLabel: { color: '#7a8699', fontSize: 11 } },
+      yAxis: { type: 'value', name: '元', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [
+        { name: '无储能', type: 'bar', barWidth: '32%',
+          data: d.days.map(function (x) { return x.cost_no_storage; }),
+          itemStyle: { borderRadius: [5, 5, 0, 0] } },
+        { name: '有储能', type: 'bar', barWidth: '32%',
+          data: d.days.map(function (x) { return x.cost_with_storage; }),
+          itemStyle: { borderRadius: [5, 5, 0, 0] } },
+      ],
+    });
+  } catch (e) {
+    showError(statBox, e.message);
+  }
+}
+
+load();
+</script>
+</body>
+</html>

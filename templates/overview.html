@@ -1,0 +1,178 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 总览</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/" class="active">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/settings">系统设置</a><a href="/carbon">碳核算 ESG</a>
+    <a href="/chat">智能助手</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>园区总览</h1>
+    <p>保障房 · 园区能源管理 + 碳排放核算 · 数据来源：模拟生成器（基于真实建筑能耗/电价/碳因子统计）</p>
+  </div>
+
+  <!-- 指标卡片 -->
+  <div class="grid-4" id="stat-cards">
+    <div class="loading" style="grid-column:1/-1;">加载中…</div>
+  </div>
+
+  <!-- 趋势 + 占比 -->
+  <div class="grid-2">
+    <div class="card">
+      <h3>近 30 天用电与光伏趋势</h3>
+      <div class="sub">园区日用电量（kWh）与光伏发电量（kWh）</div>
+      <div class="chart" id="trend-chart"></div>
+    </div>
+    <div class="card">
+      <h3>楼栋用电占比</h3>
+      <div class="sub">按用电量统计 · 环形图</div>
+      <div class="chart" id="pie-chart"></div>
+    </div>
+  </div>
+
+  <!-- 楼栋对比表 -->
+  <div class="card">
+    <h3>楼栋能耗对比</h3>
+    <div class="sub">年化单耗按近90天（夏季制冷季）折算，空调负荷偏高属正常 · 参考值为全年水平</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>楼栋</th><th>类型</th><th>面积(m²)</th><th>周期用电(kWh)</th>
+              <th>碳排放(tCO₂e)</th><th>年化单耗(kWh/m²·a)</th><th>对比参考值</th></tr>
+        </thead>
+        <tbody id="building-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 算法概览 -->
+  <div class="card">
+    <h3>四大智能模块</h3>
+    <div class="sub">点击进入对应页面查看详情</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      <a class="btn btn-orange" href="/anomaly">🛡 异常检测 预测残差法</a>
+      <a class="btn btn-purple" href="/forecast">📈 负荷预测 LightGBM</a>
+      <a class="btn btn-green" href="/storage">🔋 储能调度 线性规划</a>
+      <a class="btn btn-red" href="/carbon">🌱 碳核算 排放因子法</a>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  慧碳安居 · 第一届"海之子"杯AI智能体挑战赛 · 保障房/园区能耗优化方向（能源管理 + ESG）
+</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script>
+(async function () {
+  // 日期
+  const d = new Date();
+  document.getElementById('nav-date').textContent =
+    d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+
+  const statBox = document.getElementById('stat-cards');
+  const trendEl = document.getElementById('trend-chart');
+  const pieEl = document.getElementById('pie-chart');
+  try {
+    const data = await fetchJSON('/api/overview');
+
+    // ---- 指标卡片 ----
+    statBox.innerHTML = [
+      '<div class="stat-card stat-blue"><div class="label">园区总用电</div>' +
+        '<div class="value">' + fmtNum(data.total_kwh) + ' <small>kWh</small></div>' +
+        '<div class="note">' + data.n_days + ' 天累计 · 碳因子 ' + data.factor + ' kgCO₂e/kWh</div></div>',
+      '<div class="stat-card stat-cyan"><div class="label">光伏发电量</div>' +
+        '<div class="value">' + fmtNum(data.total_pv) + ' <small>kWh</small></div>' +
+        '<div class="note">等效减排约 ' + fmtNum(data.total_pv * data.factor / 1000, 1) + ' tCO₂e</div></div>',
+      '<div class="stat-card stat-red"><div class="label">碳排放总量</div>' +
+        '<div class="value">' + fmtNum(data.total_co2, 1) + ' <small>tCO₂e</small></div>' +
+        '<div class="note">排放因子法 · 2024全国电力碳足迹因子</div></div>',
+      '<div class="stat-card stat-orange"><div class="label">园区峰值负荷</div>' +
+        '<div class="value">' + fmtNum(data.peak_kw) + ' <small>kW</small></div>' +
+        '<div class="note">历史逐时峰值</div></div>',
+    ].join('');
+
+    // ---- 趋势图 ----
+    const trendChart = initChart(trendEl);
+    renderChart(trendChart, {
+      color: ['#4a90d9', '#36b8c9'],
+      tooltip: Object.assign({}, TOOLTIP, { formatter: function (p) {
+        let s = p[0].axisValue + '<br/>';
+        p.forEach(function (i) {
+          s += i.marker + i.seriesName + '：' + fmtNum(i.value, 1) + ' kWh<br/>';
+        });
+        return s;
+      }}),
+      legend: { data: ['园区用电', '光伏发电'], top: 0, textStyle: { color: '#7a8699' } },
+      grid: { left: 55, right: 20, top: 36, bottom: 30 },
+      xAxis: { type: 'category', data: data.trend.map(function (t) { return t.date.slice(5); }),
+               axisLabel: { color: '#7a8699', fontSize: 11 }, axisLine: { lineStyle: { color: '#e8ecf1' } } },
+      yAxis: { type: 'value', name: 'kWh', nameTextStyle: { color: '#7a8699' },
+               axisLabel: { color: '#7a8699', fontSize: 11 }, splitLine: { lineStyle: { color: '#f1f4f8' } } },
+      series: [
+        { name: '园区用电', type: 'line', smooth: true, showSymbol: false,
+          data: data.trend.map(function (t) { return t.kwh; }),
+          areaStyle: { opacity: 0.15 },
+          lineStyle: { width: 2 } },
+        { name: '光伏发电', type: 'line', smooth: true, showSymbol: false,
+          data: data.trend.map(function (t) { return t.pv; }),
+          lineStyle: { width: 2 } },
+      ],
+    });
+
+    // ---- 楼栋占比 ----
+    const pieChart = initChart(pieEl);
+    renderChart(pieChart, {
+      color: ['#4a90d9', '#3eb575', '#f5a623'],
+      tooltip: Object.assign({}, TOOLTIP, { trigger: 'item',
+        formatter: function (p) { return p.name + '：' + fmtNum(p.value, 1) + ' kWh（' + p.percent + '%）'; } }),
+      legend: { bottom: 0, textStyle: { color: '#7a8699' } },
+      series: [{
+        type: 'pie', radius: ['42%', '68%'], center: ['50%', '46%'],
+        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+        label: { formatter: '{b}\n{d}%', fontSize: 12, color: '#2b3245' },
+        data: data.buildings.map(function (b) {
+          return { name: b.name + '（' + b.type + '）', value: b.kwh };
+        }),
+      }],
+    });
+
+    // ---- 楼栋表 ----
+    const ref = { '办公': '85-100', '住宅': '30-40', '商业': '120-150' };
+    document.getElementById('building-table').innerHTML = data.buildings.map(function (b) {
+      const r = ref[b.type] || '—';
+      return '<tr><td><b>' + b.name + '</b></td><td>' + b.type + '</td><td>' +
+        fmtNum(b.area) + '</td><td>' + fmtNum(b.kwh) + '</td><td>' + fmtNum(b.co2, 1) +
+        '</td><td><span class="badge badge-blue">' + fmtNum(b.annual_per_m2) + '</span></td><td>' +
+        r + ' kWh/m²·a</td></tr>';
+    }).join('');
+  } catch (e) {
+    showError(statBox.parentElement, e.message);
+    showError(trendEl, e.message);
+    showError(pieEl, e.message);
+  }
+})();
+</script>
+</body>
+</html>

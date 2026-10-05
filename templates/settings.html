@@ -1,0 +1,159 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>慧碳安居 · 系统设置</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="logo">⚡</span>慧碳安居</div>
+  <div class="nav-links">
+    <a href="/">总览</a>
+    <a href="/energy">能耗分析</a>
+    <a href="/anomaly">异常诊断</a>
+    <a href="/forecast">负荷预测</a>
+    <a href="/storage">储能调度</a>
+    <a href="/carbon">碳核算 ESG</a>
+    <a href="/settings" class="active">系统设置</a>
+  </div>
+  <div class="nav-right">
+    <div class="date" id="nav-date"></div>
+    <div>园区综合能源管理平台</div>
+  </div>
+</nav>
+
+<div class="container">
+  <div class="page-title">
+    <h1>系统设置 · 参数配置与数据接入</h1>
+    <p>修改后即时生效，碳核算、储能调度会自动使用新参数。所有配置保存在 settings.json，便于迁移部署。</p>
+  </div>
+
+  <!-- 第一组：碳因子与电价 -->
+  <div class="grid-2">
+    <div class="card">
+      <h3>🌍 碳排放因子（可修改）</h3>
+      <p style="color:#666;font-size:13px;">国家电网年度排放因子会更新。修改后，碳核算页所有数字会按新因子重算。</p>
+      <label>碳足迹因子 (kgCO₂/kWh)</label>
+      <input type="number" step="0.0001" id="in-factor" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:6px;">
+      <label>因子来源说明</label>
+      <input type="text" id="in-factor-src" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:6px;">
+      <button onclick="saveConfig()" style="background:#2e7d32;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;">保存碳因子</button>
+    </div>
+
+    <div class="card">
+      <h3>💰 分时电价（可修改）</h3>
+      <p style="color:#666;font-size:13px;">平段基准电价修改后，峰/谷/深谷电价按 1.7× / 0.3× / 0.1× 自动重算，储能调度会用新电价。</p>
+      <label>平段电价 (元/kWh)</label>
+      <input type="number" step="0.01" id="in-price" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:6px;">
+      <p style="font-size:12px;color:#888;margin-top:8px;">
+        山东工商业示例：平段 0.70，高峰 1.19，尖峰 1.40，低谷 0.21，深谷 0.07。
+      </p>
+      <button onclick="savePrice()" style="background:#1565c0;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;">保存电价</button>
+    </div>
+  </div>
+
+  <!-- 第二组：数据接入 -->
+  <div class="card" style="margin-top:20px;">
+    <h3>📡 真实数据接入（扩展接口）</h3>
+    <p style="color:#666;font-size:13px;">
+      当前使用模拟数据生成器。接入真实园区时，把智能电表/网关的数据地址填到下面，系统会按小时轮询拉取 load_kw / pv_kw 字段写入 SQLite。
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div>
+        <label>数据源类型</label>
+        <select id="in-source" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:6px;">
+          <option value="simulator">模拟数据（演示用）</option>
+          <option value="mqtt">MQTT 网关</option>
+          <option value="modbus">Modbus TCP</option>
+          <option value="http">HTTP REST API</option>
+        </select>
+      </div>
+      <div>
+        <label>数据接口地址</label>
+        <input type="text" id="in-api" placeholder="例如：http://192.168.1.100:8080/api/meters" style="width:100%;padding:8px;margin:6px 0;border:1px solid #ddd;border-radius:6px;">
+      </div>
+    </div>
+    <p style="font-size:12px;color:#888;">
+      数据格式要求：每小时一条记录，字段 ts(ISO8601)、building(A/B/C)、load_kw、pv_kw、outdoor_temp。
+      接入后点"一键重训"让异常检测模型用真实数据重新拟合。
+    </p>
+    <button onclick="saveApi()" style="background:#6a1b9a;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;">保存接入配置</button>
+  </div>
+
+  <!-- 第三组：模型重训 -->
+  <div class="card" style="margin-top:20px;">
+    <h3>🔄 模型重训</h3>
+    <p style="color:#666;font-size:13px;">
+      接入新数据（或标注了新异常样本）后，点下面按钮用当前 SQLite 里的数据重新训练异常检测模型。重训不会删数据，只是更新模型参数。
+    </p>
+    <div id="retrain-status" style="background:#f5f5f5;padding:12px;border-radius:6px;font-family:monospace;font-size:13px;">
+      尚未重训。当前模型使用数据库初始数据拟合。
+    </div>
+    <button onclick="retrain()" style="background:#e65100;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;margin-top:10px;">一键重训异常检测模型</button>
+  </div>
+
+  <div class="card" style="margin-top:20px;background:#e8f5e9;">
+    <h3>📦 扩展说明</h3>
+    <p style="font-size:13px;line-height:1.8;">
+      本系统采用配置驱动架构：换一个园区只需要修改 settings.json 里的碳因子、电价，以及 buildings 表里的面积和业态；
+      不需要重写算法代码。碳核算模块每次请求都从 config 读因子，所以网页改完即时生效；
+      异常检测模型重训接口已预留，后续接真实 MQTT 网关后可以做定时任务自动重训。
+    </p>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  const c = await r.json();
+  $('in-factor').value = c.carbon_factor;
+  $('in-factor-src').value = c.carbon_factor_source;
+  $('in-price').value = c.price_flat;
+  $('in-source').value = c.data_source || 'simulator';
+  $('in-api').value = c.data_api_url || '';
+}
+
+async function postConfig(body) {
+  const r = await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  const j = await r.json();
+  alert(j.ok ? '已保存，碳核算页刷新后生效' : ('保存失败：' + j.error));
+}
+
+function saveConfig() {
+  postConfig({
+    carbon_factor: parseFloat($('in-factor').value),
+    carbon_factor_source: $('in-factor-src').value
+  });
+}
+function savePrice() {
+  postConfig({ price_flat: parseFloat($('in-price').value) });
+}
+function saveApi() {
+  postConfig({ data_source: $('in-source').value, data_api_url: $('in-api').value });
+}
+
+async function retrain() {
+  $('retrain-status').textContent = '训练中（约5-15秒）…';
+  const r = await fetch('/api/retrain', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) {
+    $('retrain-status').innerHTML =
+      `重训完成（${j.trained_at}）：F1=${j.f1}，精确率=${j.precision}，召回率=${j.recall}，` +
+      `TP=${j.tp} / FP=${j.fp} / FN=${j.fn}。可回到异常诊断页查看。`;
+  } else {
+    $('retrain-status').textContent = '重训失败：' + j.error;
+  }
+}
+
+loadConfig();
+</script>
+</body>
+</html>
